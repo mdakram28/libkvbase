@@ -37,7 +37,8 @@ class TermInfo {
         m_term(0),
         m_votedFor(INVALID_SERVER),
         m_state(FOLLOWER),
-        m_voteCount(0) {
+        m_voteCount(0),
+        m_leaderId(INVALID_SERVER) {
     for (const auto& peer : peersInfo) {
       if (peer.serverId == m_serverId)
         continue;
@@ -55,6 +56,7 @@ class TermInfo {
     m_state = newState;
     m_votedFor = INVALID_SERVER;
     m_voteCount = 0;
+    m_leaderId = INVALID_SERVER;
     resetElectionTimeout();
 
     /* Clear peer info */
@@ -69,11 +71,15 @@ class TermInfo {
 
   LogStoreState state() const { return m_state; }
 
+  ServerId leaderId() const { return m_leaderId; }
+
   bool isTimedOut(uint64_t currentTime) {
     return currentTime > m_electionTimeout;
   }
 
   void setVotedFor(ServerId grantTo) { m_votedFor = grantTo; }
+
+  void setLeaderId(ServerId leaderId) { m_leaderId = leaderId; }
 
   void voteGranted(ServerId grantedBy) {
     PeerInfo& peer = m_peersInfo[m_serverIdToPeerIndex[grantedBy]];
@@ -81,7 +87,8 @@ class TermInfo {
       peer.votedFor = m_serverId;
       m_voteCount++;
 
-      if (m_voteCount + (m_votedFor == INVALID_SERVER ? 1 : 0) >= (m_peersInfo.size() + 1)/2 + 1) {
+      if (m_voteCount + (m_votedFor == INVALID_SERVER ? 1 : 0) >=
+          (m_peersInfo.size() + 1) / 2 + 1) {
         m_state = LEADER;
       }
     }
@@ -105,6 +112,7 @@ class TermInfo {
   std::vector<PeerInfo> m_peersInfo;
   uint64_t m_voteCount;
   uint64_t m_electionTimeout;
+  ServerId m_leaderId;
 };
 
 /**
@@ -129,7 +137,9 @@ class LogStore {
         sendHeartbeatThrottled(&LogStore::sendHeartbeat,
                                CONFIG_HEARTBEAT_SEND_DELAY_MS, this),
         requestVotesThrottled(&LogStore::requestVotes,
-                              CONFIG_VOTE_REQUEST_TIMEOUT, this) {
+                              CONFIG_VOTE_REQUEST_TIMEOUT, this),
+        sendStateToLeaderThrottled(&LogStore::sendStateToLeader,
+                                   CONFIG_SYNC_STATE_TIMEOUT, this) {
     log = spdlog::default_logger()->clone("server_" + std::to_string(serverId));
     m_thread = std::thread(&LogStore::threadMain, this);
     rpcChannel->onMessage(std::bind(&LogStore::onRpcMessage, this,
@@ -157,6 +167,12 @@ class LogStore {
 
   uint64_t getCommittedOffset() { return m_committedOffset; }
 
+  std::string getTermInfo() {
+    std::unique_lock<std::mutex> lock(m_mutex);
+    return std::format
+    {, StateToString(m_termInfo.state())};
+  }
+
  private:
   ServerId m_serverId;
   std::shared_ptr<spdlog::logger> log;
@@ -170,6 +186,7 @@ class LogStore {
   /* Throttled functions */
   ThrottledFunction<LogStore> sendHeartbeatThrottled;
   ThrottledFunction<LogStore> requestVotesThrottled;
+  ThrottledFunction<LogStore> sendStateToLeaderThrottled;
 
   /* Raft parameters */
   TermInfo m_termInfo;
@@ -227,12 +244,23 @@ class LogStore {
     requestVotesThrottled(currentTime);
   }
 
+  void sendStateToLeader(uint64_t currentTime) {
+    std::unique_lock<std::mutex> lock(m_mutex);
+
+    if (m_termInfo.leaderId() == INVALID_SERVER) {
+      return;
+    }
+
+    // FollowerStateMessage *msg = makeRpcMessage<FollowerStateMessage>();
+    // rpcChannel->sendMessage(m_termInfo.leaderId(), STATIC_CONST_PTR_CAST(msg, const char *), msg->size);
+    // free(msg);
+  }
+
   void threadMain() {
     while (m_running) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(777));
+      uint64_t sleep_time = (((long)rand()) * 1000) / RAND_MAX;
+      std::this_thread::sleep_for(std::chrono::milliseconds((sleep_time)));
       uint64_t currentTime = currentTimeMs();
-
-      log->debug("State: {}", StateToString(m_termInfo.state()));
 
       switch (m_termInfo.state()) {
         case LEADER:
@@ -241,6 +269,8 @@ class LogStore {
         case FOLLOWER:
           if (m_termInfo.isTimedOut(currentTime)) {
             tryMakeCandidate(currentTime);
+          } else {
+            sendStateToLeaderThrottled(currentTime);
           }
           break;
         case CANDIDATE:
@@ -260,6 +290,7 @@ class LogStore {
       m_termInfo.upgrade(rpcMessage->term, FOLLOWER);
     }
 
+    m_termInfo.setLeaderId(rpcMessage->serverId);
     m_termInfo.resetElectionTimeout();
   }
 

@@ -8,6 +8,12 @@
 #define STATIC_CONST_PTR_CAST(ptr, type) \
   static_cast<type>(static_cast<const void*>(ptr))
 
+#ifdef DEBUG
+#define LSAssert(condition) if (!(condition)) { spdlog::error("Assertion failed : [{}]", #condition); exit(1); }
+#else
+#define LSAssert(condition)
+#endif
+
 typedef uint64_t ServerId;
 typedef uint64_t ServerTerm;
 
@@ -16,6 +22,7 @@ constexpr ServerId INVALID_SERVER = 0;
 constexpr uint64_t CONFIG_HEARTBEAT_SEND_DELAY_MS = 500;
 constexpr uint64_t CONFIG_HEARTBEAT_TIMEOUT_MS = 2000;
 constexpr uint64_t CONFIG_VOTE_REQUEST_TIMEOUT = 3000;
+constexpr uint64_t CONFIG_SYNC_STATE_TIMEOUT = 600;
 
 uint64_t currentTimeMs() {
   struct timeval tp;

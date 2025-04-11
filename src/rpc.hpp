@@ -16,7 +16,7 @@ class RpcChannel {
   RpcCallback m_callback;
 };
 
-enum RpcMessageType { HEARTBEAT_REQUEST = 0, VOTE_REQUEST, VOTE_GRANT };
+enum RpcMessageType { HEARTBEAT_REQUEST = 0, VOTE_REQUEST, VOTE_GRANT, FOLLOWER_OFFSET };
 
 struct RpcMessage {
   ServerId serverId;
@@ -36,5 +36,10 @@ struct RequestVotesMessage : RpcMessage {
 struct GrantVoteMessage : RpcMessage {
   static const RpcMessageType TYPE = VOTE_GRANT;
 };
+
+// struct FollowerOffsetMessage : RpcMessage {
+//   static const RpcMessageType TYPE = FOLLOWER_OFFSET;
+//   uint64_t const 
+// }
 
 #endif /* RPC_HPP */
